@@ -1,0 +1,1079 @@
+---
+title: "Predicting NFL Prospect's Draft Positions"
+author: "Brendan McGuinness"
+date: "2024-08-06"
+output:     
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    toc_depth: 3
+    code_folding: show
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(remotes)
+library(visdat)
+library(janitor)
+library(stringr)
+library(tidyr)
+library(naniar)
+library(recipes)
+library(kableExtra)
+library(kknn)
+library(yardstick)
+library(tidyverse)
+library(tidymodels)
+library(ggplot2)
+library(gridExtra)
+library(patchwork)
+library(corrplot)
+library(discrim)
+library(glmnet)
+library(modeldata)
+library(ranger)
+library(vip)
+library(xgboost)
+library(MASS)
+library(dplyr)
+```
+
+![](/Users/brend/OneDrive/Documents/131 Project/NFL_Logo.png)
+
+# Introduction
+
+The goal for this project is to create a model that can predict where in the draft an NFL prospect will be drafted. I will be combining multiple data sets to yield better results, the data points I'm going to be focusing on are a player's position, what school they went to, and their combine stats. This is a multiclass classification problem that will use logistical models to make its predictions. 
+
+## What is the NFL Draft?
+
+The NFL Draft is an opportunity to for NFL teams to select players. Each team picks in order relative to how well they did the previous season. The team with the worst record picks first, then the second worst record picks second, and so on. This continues until all 32 NFL teams have picked a player, then they redo the same process in the same order. Each 32 group of picks is referred to as a "round" and there are 7 total rounds in the draft.
+
+![](/Users/brend/OneDrive/Documents/131 Project/Walking.gif){style="width:100%;"}
+
+## Why will this be useful?
+
+This model can be useful for the teams drafting players and the prospects entering the draft. For teams, this model could help evaluate players, and determine where they should be drafted. Also comparing them to mock drafts to see if they are under or over valued. For prospects, this model can be used to gain perspective on whether they should enter the draft before their senior year in college. If the model predicts they'll be drafted, or have a high draft projection, then it may be a good time to declare. But, if the model predicts they won't be drafted, or drafted too low, they should play another year of college to develop.
+
+# Exploritory Data Analysis
+To find the appropriate data for my project, I searched through the kaggle data base and found two data sets that will be useful.
+
+```{r, include = FALSE}
+#inputting data
+
+nfl_draft_prospects <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/nfl_draft_prospects.csv")
+
+college_stats <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/college_statistics.csv")
+
+combine_results_2000 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2000_combine.csv")
+combine_results_2001 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2001_combine.csv")
+combine_results_2002 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2002_combine.csv")
+combine_results_2003 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2003_combine.csv")
+combine_results_2004 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2004_combine.csv")
+combine_results_2005 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2005_combine.csv")
+combine_results_2006 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2006_combine.csv")
+combine_results_2007 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2007_combine.csv")
+combine_results_2008 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2008_combine.csv")
+combine_results_2009 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2009_combine.csv")
+combine_results_2010 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2010_combine.csv")
+combine_results_2011 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2011_combine.csv")
+combine_results_2012 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2012_combine.csv")
+combine_results_2013 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2013_combine.csv")
+combine_results_2014 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2014_combine.csv")
+combine_results_2015 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2015_combine.csv")
+combine_results_2016 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2016_combine.csv")
+combine_results_2017 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2017_combine.csv")
+combine_results_2018 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2018_combine.csv")
+combine_results_2019 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2019_combine.csv")
+combine_results_2020 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2020_combine.csv")
+combine_results_2021 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2021_combine.csv")
+combine_results_2022 <- read.csv("/Users/brend/OneDrive/Documents/131 Project/Data/2022_combine.csv")
+```
+
+## `nfl_draft_prospects`
+Source: [nfl_draft_prospects](https://www.kaggle.com/datasets/jacklichtenstein/espn-nfl-draft-prospect-data?resource=download&select=nfl_draft_prospects.csv)
+
+Author: Jack Lichtenstein, Publication: May 5th 2021
+
+### Raw Data
+
+Looking at the raw data there are 24 columns, but some of these can be deleted since they aren't helpful. Obvious ones include: `player_id`, `link`, `traded`, `trade_note`, `team`, `team_abbr`, `team_logo_espn`, `guid`, `player_image`. All of these are either links that we can't use, or are related to the team that drafted them (which we aren't interested in).
+
+```{r}
+ndf_head <- nfl_draft_prospects %>% head()
+
+ndf_head %>%
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:ncol(ndf_head), extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c") %>%
+  scroll_box(width = "100%")
+
+# Only keeping players drafted in the 2000 draft and after
+prospect_2000 <- subset(nfl_draft_prospects, draft_year >= 2000)
+
+# Visualizing the missing data
+prospect_final1 <- prospect_2000
+prospect_final1 %>%
+  vis_miss()
+```
+
+### Column deletion
+  - **weight and height**: It's used in the combine stats later
+  
+  - **pos_rk and ovr_rk**: They were directly correlated to draft position and won't be helpful for trying to predict draft position using other predictors.
+  
+  - **years 1967 - 1999**: These years weren't included in the combine data set I found, and they were missing a lot of data in important columns
+  
+### Column addition
+  - **Division and Conference**: Will help us if the school they went to has a correlation with where they are drafted
+  
+  - **Drafted**: Yes or no for if a player was drafted or not
+
+```{r, include = FALSE}
+# Tidying nfl_draft_prospects data
+
+# Allowing me to see all of the data
+options(max.print = 10000)
+
+# Making this one prospect specifically a Safety
+prospect_final1[138,4] <- "Safety" 
+prospect_final1[138,5] <- "S"
+
+# Changing all of the blank positions in the data set to Center, I looked up more than ten of the players without a position, and they all came back as centers
+prospect_final1$pos_abbr[is.na(prospect_final1$pos_abbr)] <- "C"
+prospect_final1$position[is.na(prospect_final1$position)] <- "Center"
+
+# Changing the abbreviated positions so they are the same across both data sets
+prospect_final1$pos_abbr <- gsub("\\b(OLB|ILB)\\b", "LB", prospect_final1$pos_abbr, ignore.case = TRUE)
+prospect_final1$pos_abbr <- gsub("\\b(S|CB)\\b", "DB", prospect_final1$pos_abbr, ignore.case = TRUE)
+prospect_final1$pos_abbr <- gsub("\\b(PK)\\b", "K", prospect_final1$pos_abbr, ignore.case = TRUE)
+prospect_final1$pos_abbr <- gsub("\\b(DE|DT)\\b", "DL", prospect_final1$pos_abbr, ignore.case = TRUE)
+prospect_final1$pos_abbr <- gsub("\\b(OT|C|OG)\\b", "OL", prospect_final1$pos_abbr, ignore.case = TRUE)
+
+# Changing a player's round and overall value if they went un-drafted
+prospect_final1$round <- as.character(prospect_final1$round)
+prospect_final1$round[is.na(prospect_final1$round)] <- "Undrafted"
+prospect_final1$overall[is.na(prospect_final1$overall)] <- 0
+
+# Changing column names so they can be merged with the combine data set later
+colnames(prospect_final1)[5] <- "Pos"
+colnames(prospect_final1)[3] <- "Player_Name"
+
+# Making a function that formats all the names properly for merging later
+
+convert_name <- function(input_var) {
+  name_var <- sapply(input_var, function(input_name) {
+  name1 <- str_split(input_name, "\\s+")[[1]]
+  cap_name1 <- str_to_title(name1)
+  cap_name1_str <- str_c(cap_name1, collapse = " ")
+  return(cap_name1_str)
+  })
+return(name_var)
+}
+
+
+# Taking dots out of every name
+prospect_final1$Player_Name <- gsub("\\.", "", prospect_final1$Player_Name)
+
+#Using the function
+prospect_final1$Player_Name <- convert_name(prospect_final1$Player_Name)
+
+#Changing the abbreviation for San Jose and NC State
+prospect_final1$school_abbr[prospect_final1$school == "San Jose State"] <- "SJU"
+prospect_final1$school_abbr[prospect_final1$school == "North Carolina State"] <- "NCS"
+
+#Making New Variables
+#Division: FBS or FCS
+
+division_check <- c("APP", "ASU", "ARST", "AUB", "BALL", "BAY", "BSU", "BC", "BGSU", "BYU", "FRES", "CMU", "CLEM", "CCAR", "CSU", "DUKE", "ECU", "EMU", "FAU", "FIU", "FSU", "GT", "GASO", "GAST", "IU", "ISU", "JVST", "JMU", "KSU", "KENT", "LIB", "LSU", "LT", "MRSH", "M-OH", "MSU", "MTSU", "MSST", "NMSU", "NCS", "NIU", "NW", "OHIO", "OKST", "ODU", "ORST", "PSU", "PUR", "RICE", "RUTG", "SHSU", "SDSU", "SJU", "SMU", "STAN", "SYR", "TEM", "TA&M", "TCU", "TXST", "TTU", "OSU", "UNC", "TLSA", "TROY", "TULN", "AFA", "NAVY", "ARMY", "BUFF", "AKR", "AKRON", "ALA", "ARIZ", "ARK", "CAL", "UCLA", "UCF", "CIN", "COLO", "CONN", "FLA", "UGA", "HAW", "HOU", "ILL", "IOWA", "KU", "UK", "ULL", "LOU", "MD", "UMASS", "MASS", "MEM", "MIA", "MIAMI", "MICH", "MINN", "MISS", "MIZ", "NEB", "UNLV", "NEV", "UNM", "CHAR", "UNT", "ND", "OKLA", "OU", "ORE", "PITT", "USA", "SC", "USF", "USC", "TENN", "TEX", "UTEP", "UTSA", "TOL", "UTAH", "UVA", "WASH", "WISC", "WIS", "WYO", "USU", "VAN", "VT", "WAKE", "WSU", "WVU", "WKU", "WMU", "UAB", "NCST", "IND", "LAF", "UL")
+
+
+for (i in 1:nrow(prospect_final1)){
+  if (prospect_final1$school_abbr[i] %in% division_check) {
+    prospect_final1$Division[i] <- "FBS"
+  }
+  else {
+    prospect_final1$Division[i] <- "FCS"
+  }
+  
+}
+
+#Conference: ACC, SEC, PAC-12, etc.
+American = c("ECU", "FAU", "RICE", "SMU", "TEM", "CHAR", "TLSA", "TULN", "NAVY", "MEM", "UAB", "UNT", "USF", "UTSA")
+Sun_Belt = c("APP", "ARST", "CCAR", "GASO", "GAST", "JMU", "MRSH", "ODU", "TXST", "TROY", "ULL", "LAF", "UL", "USA")
+Pac_12 = c("ASU", "ORST", "STAN", "ARIZ", "CAL", "UCLA", "COLO", "ORE", "USC", "UTAH", "WASH", "WSU")
+SEC = c("AUB", "LSU", "MSST", "ALA", "ARK", "FLA", "UGA", "UK", "MISS", "MIZ", "SC", "TENN", "VAN", "TA&M")
+Mid_American = c("BALL", "BGSU", "CMU", "EMU", "KENT", "M-OH", "NIU", "OHIO", "BUFF", "AKR", "AKRON", "TOL", "WMU")
+Big_12 = c("BAY", "BYU", "ISU", "KSU", "OKST", "TCU", "TTU", "UCF", "CIN", "HOU", "KU", "OKLA", "OU", "WVU", "TEX")
+ACC = c("BC", "CLEM", "DUKE", "FSU", "GT", "NCS", "NCST", "SYR", "UNC", "LOU", "MIA", "MIAMI", "PITT", "UVA", "VT", "WAKE")
+Mountain_West = c("BSU", "FRES", "CSU", "SDSU", "SJU", "AFA", "HAW", "UNLV", "NEV", "UNM", "WYO", "USU")
+Big_Ten = c("IU", "IND", "MSU", "NW", "PSU", "PUR", "RUTG", "OSU", "ILL", "IOWA", "MD", "MICH", "MINN", "NEB", "WISC", "WIS")
+Conference_USA = c("FIU", "JVST", "LIB", "LT", "MTSU", "NMSU", "SHSU", "UTEP", "WKU")
+FBS_Independents = c("ARMY", "CONN", "UMASS", "MASS", "ND")
+
+for (i in 1:nrow(prospect_final1)){
+  if (prospect_final1$Division[i] == "FBS") {
+    if (prospect_final1$school_abbr[i] %in% American) {
+      prospect_final1$Conference[i] <- "American"
+    }
+    if (prospect_final1$school_abbr[i] %in% Sun_Belt) {
+      prospect_final1$Conference[i] <- "Sun Belt"
+    }
+    if (prospect_final1$school_abbr[i] %in% Pac_12) {
+      prospect_final1$Conference[i] <- "Pac-12"
+    }
+    if (prospect_final1$school_abbr[i] %in% SEC) {
+      prospect_final1$Conference[i] <- "SEC"
+    }
+    if (prospect_final1$school_abbr[i] %in% Mid_American) {
+      prospect_final1$Conference[i] <- "Mid-American"
+    }
+    if (prospect_final1$school_abbr[i] %in% Big_12) {
+      prospect_final1$Conference[i] <- "Big 12"
+    }
+    if (prospect_final1$school_abbr[i] %in% ACC) {
+      prospect_final1$Conference[i] <- "ACC"
+    }
+    if (prospect_final1$school_abbr[i] %in% Mountain_West) {
+      prospect_final1$Conference[i] <- "Mountain West"
+    }
+    if (prospect_final1$school_abbr[i] %in% Big_Ten) {
+      prospect_final1$Conference[i] <- "Big Ten"
+    }
+    if (prospect_final1$school_abbr[i] %in% Conference_USA) {
+      prospect_final1$Conference[i] <- "Conference USA"
+    }
+    if (prospect_final1$school_abbr[i] %in% FBS_Independents) {
+      prospect_final1$Conference[i] <- "FBS Independents"
+    }
+  }
+  else {
+    prospect_final1$Conference[i] <- "FCS"
+  }
+  
+}
+
+# Adding a column for if a player was drafted or not
+
+for (i in 1:nrow(prospect_final1)){
+  if (prospect_final1$overall[i] == 0) {
+    prospect_final1$Drafted[i] <- "No"
+  }
+  else {
+    prospect_final1$Drafted[i] <- "Yes"
+  }
+  
+}
+
+
+#Making Conference and Division variables visible
+prospect_final1 <- subset(prospect_final1, select = c(draft_year, Player_Name, position, Pos, school, school_abbr, Division, Conference, overall, round, grade, Drafted))
+
+prospect_final_pos <- prospect_final1[order(prospect_final1$Pos), ]
+#prospect_final_pos
+```
+
+```{r, results = 'asis'}
+pf_head <- prospect_final1 %>% head()
+
+pf_head %>%
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:ncol(pf_head), extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c") %>%
+  scroll_box(width = "100%")
+```
+
+## `combine_results` 
+Source: [combine_results](https://www.kaggle.com/datasets/mitchellweg1/nfl-combine-results-dataset-2000-2022)
+
+Author: Mitchell Weg, Publication: June 8th 2023
+
+![](/Users/brend/OneDrive/Documents/131 Project/Combine.gif)
+
+### Raw Data
+
+All 11 of these columns will be useful because they tell the physical attributes of a player, or give us information for merging with the `nfl_draft_prospects` data set, I still need to convert the height into inches and format the positions and names so they can be merged with the other data set
+
+```{r}
+#Putting all of the combine results into one data set
+combine_results_all <- bind_rows(combine_results_2000, combine_results_2001, combine_results_2002, combine_results_2003, combine_results_2004, combine_results_2005, combine_results_2006, combine_results_2007, combine_results_2008, combine_results_2009, combine_results_2010, combine_results_2011, combine_results_2012, combine_results_2013, combine_results_2014, combine_results_2015, combine_results_2016, combine_results_2017, combine_results_2018, combine_results_2019, combine_results_2020, combine_results_2021,)
+
+# Making a copy
+combine_results_all1 <- combine_results_all
+
+cr_head <- combine_results_all1 %>% head()
+
+cr_head %>%
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:ncol(cr_head), extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c") %>%
+  scroll_box(width = "100%")
+
+combine_results_all1 %>%
+  vis_miss()
+```
+
+
+```{r, include = FALSE}
+# Tidying Combine results data
+
+### Converting height into inches and an integer
+split_H <- separate(combine_results_all1, col = Ht, into = c("Feet", "Inches"), sep = "-")
+
+split_H$Feet <- as.numeric(split_H$Feet)
+split_H$Inches <- as.numeric(split_H$Inches)
+
+split_H$Feet <- split_H$Feet * 12
+
+split_H$height <- split_H$Feet + split_H$Inches
+
+combine_results_all2 <- subset(split_H, select = -c(Feet, Inches))
+
+colnames(combine_results_all2)[4] <- "weight"
+###
+
+# Changing the abbreviated positions so they are the same across both data sets
+combine_results_all2$Pos <- gsub("\\b(OLB|ILB)\\b", "LB", combine_results_all2$Pos, ignore.case = TRUE)
+combine_results_all2$Pos <- gsub("\\b(S|CB)\\b", "DB", combine_results_all2$Pos, ignore.case = TRUE)
+combine_results_all2$Pos <- gsub("\\b(EDGE|DT|DE)\\b", "DL", combine_results_all2$Pos, ignore.case = TRUE)
+combine_results_all2$Pos <- gsub("\\b(OT|OG)\\b", "OL", combine_results_all2$Pos, ignore.case = TRUE)
+
+# Changing column name so they can be merged with the combine data set later
+colnames(combine_results_all2)[1] <- "Player_Name"
+
+# Taking out the dots in every name
+combine_results_all2$Player_Name <- gsub("\\.", "", combine_results_all2$Player_Name)
+
+# Using the function created earlier to format all the names
+combine_results_all2$Player_Name <- convert_name(combine_results_all2$Player_Name)
+
+# Ordering by first name to check for errors
+combine_ordered <- combine_results_all2[order(combine_results_all2$Player_Name), ]
+#combine_ordered
+```
+
+```{r}
+cra_head <- combine_results_all2 %>% head()
+
+cra_head %>%
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:ncol(cra_head), extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c") %>%
+  scroll_box(width = "100%")
+```
+
+## `pcm_inorder`
+
+**P.C.M**: Prospect Combine Merge
+
+The merging of both data sets into one giving us a comprehensive list of players that have been drafted between 2000 and 2021, with their combine stats. 
+
+```{r, include=FALSE}
+#Merging the data sets
+
+prospect_combine_merge <- merge(prospect_final1, combine_results_all2, by = c("Player_Name", "Pos"))
+
+prospect_combine_merge <- subset(prospect_combine_merge, select = -c(School))
+
+# Sorting by year and overall pick (how it was ordered originally)
+pcm_sorted <- prospect_combine_merge[order(prospect_combine_merge$draft_year, prospect_combine_merge$overall), ]
+
+pcm_inorder <- dplyr::select(pcm_sorted, Player_Name, overall, round, Drafted, draft_year, grade, Pos, position, height, weight, X40yd, Vertical, Bench, Broad.Jump, X3Cone, Shuttle, school_abbr, school, Division, Conference)
+
+pos_order <- pcm_inorder[order(pcm_inorder$Pos), ]
+
+options(max.print = 10000)
+# print(pos_order)
+# print(pcm_inorder)
+```
+
+```{r}
+pcm_head <- pcm_inorder %>% head()
+
+pcm_head %>%
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:ncol(pcm_head), extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c") %>%
+  scroll_box(width = "100%")
+```
+
+## Code Book
+
+  * `Player_Name`(chr): Name of the player
+  * `overall`(int): The overall pick a player was drafted
+  * `round`(factor): The round a player was drafted in
+  * `Drafted`(factor): If a player was or wasn't drafted
+  * `draft_year`(int): The year a player was drafted
+  * `grade`(int): ESPN's evaluation of the player, 100 best and 0 worst
+  * `Pos`(factor): Abbreviation of a player's position
+  * `position`(chr): Full length of a player's position
+  * `height`(int): Player's height
+  * `weight`(int): Player's weight
+  * `X40yd`(int): Player's 40 yard dash time
+  * `Vertical`(int): Player's vertical leap
+  * `Bench`(int): Player's bench press reps of 225lbs
+  * `Broad.Jump`(int): Player's broad jump
+  * `X3Cone`(int): Player's time for 3 cone drill
+  * `Shuttle`(int): Player's time for shuttle run
+  * `school_abbr`(chr): Abbreviation of a player's college
+  * `school`(chr): Full length of a player's college
+  * `Division`(factor): If a player played in the FBS or FCS division
+  * `Conference`(factor): Which conference the player's college was in, FCS or a conference in FBS
+
+
+## Missing Data
+
+Looking at the data ordered by year it's clear that from the years 2000 to 2003, ESPN simply didn't give prospects a grade, I think the best course of action is to delete these years from the data. It won't create bias since these years are independent from other draft years.
+
+```{r}
+pcm_inorder %>% vis_miss()
+```
+
+Looking at the missingness by position, the only blanks that aren't at random are for `Quarter backs`, `Punters`, and `Kickers`. `Quarter backs` don't record bench at the combine, while `Kickers` and `Punters` only record 40 yard times. Also, the second gap in bench is due to Wide Receivers not recording bench from 2004 to 2006. For the `Quarter backs`, `Punter`, and `Kickers` I'm inputting 0s for the missingness. I'll be using bagged trees to fill in the rest of the missing data. 
+
+```{r}
+pos_order %>% vis_miss()
+```
+
+
+```{r, include = FALSE}
+# Dealing with missing data
+
+#Order by position to see if there is a correlation for what's missing
+pos_order2 <- pcm_inorder[order(pcm_inorder$Pos), ]
+pos_order2 <- dplyr::select(pos_order, Pos, X40yd, Vertical, Bench, Broad.Jump, X3Cone, Shuttle)
+
+# I learned that all of the data is missing at random, except QB don't do bench, Punters and Kickers only do 40 time
+
+# Removing years from 2000 - 2003 because they don't have grade
+pcm_inorder <- subset(pcm_inorder, draft_year > 2003)
+
+# Inputting 0 for Punter's stats, Kicker's stats, and QB's bench
+for (i in 1:nrow(pcm_inorder)){
+  if (pcm_inorder$Pos[i] == "QB") {
+    pcm_inorder$Bench[i] <- 0
+  }
+  if (pcm_inorder$Pos[i] == "K") {
+    pcm_inorder$Vertical[i] <- 0
+    pcm_inorder$Bench[i] <- 0
+    pcm_inorder$Broad.Jump[i] <- 0
+    pcm_inorder$X3Cone[i] <- 0
+    pcm_inorder$Shuttle[i] <- 0
+  }
+  if (pcm_inorder$Pos[i] == "P") {
+    pcm_inorder$Vertical[i] <- 0
+    pcm_inorder$Bench[i] <- 0
+    pcm_inorder$Broad.Jump[i] <- 0
+    pcm_inorder$X3Cone[i] <- 0
+    pcm_inorder$Shuttle[i] <- 0
+  }
+}
+
+# pcm_inorder
+# Using bagged trees to fill in missing data for combine stats and grade
+
+set.seed(3378)
+pcm_miss <- pcm_inorder
+
+pcm_split <- initial_split(pcm_inorder, prop = 0.80, strata = Shuttle)
+
+pcm_train <- training(pcm_split)
+pcm_test <- testing(pcm_split)
+
+
+pcm_recipe <- recipe(Shuttle ~ ., data = pcm_miss) %>%
+  step_impute_bag(Shuttle, impute_with = 
+                    imp_vars(Pos, round, height, weight, Division, Conference)) %>%
+  step_impute_bag(X3Cone, impute_with = 
+                    imp_vars(Pos, round, height, weight, Division, Conference)) %>%
+  step_impute_bag(Broad.Jump, impute_with = 
+                    imp_vars(Pos, round, height, weight, Division, Conference)) %>%
+  step_impute_bag(Bench, impute_with = 
+                    imp_vars(Pos, round, height, weight, Division, Conference)) %>%
+  step_impute_bag(Vertical, impute_with = 
+                    imp_vars(Pos, round, height, weight, Division, Conference)) %>%
+  step_impute_bag(X40yd, impute_with = 
+                    imp_vars(Pos, round, height, weight, Division, Conference)) %>%
+  step_impute_bag(grade, impute_with = 
+                    imp_vars(Pos, round, height, weight, Division, Conference))
+
+pcm_full <- prep(pcm_recipe) %>%
+  bake(new_data = pcm_miss)
+
+# pcm_full %>% vis_miss()
+
+#Changing all of the factor variables back into character variables
+pcm_full$Player_Name <- as.character(pcm_full$Player_Name)
+pcm_full$round <- as.character(pcm_full$round)
+pcm_full$Drafted <- as.character(pcm_full$Drafted)
+pcm_full$Pos <- as.character(pcm_full$Pos)
+pcm_full$position <- as.character(pcm_full$position)
+pcm_full$school_abbr <- as.character(pcm_full$school_abbr)
+pcm_full$school <- as.character(pcm_full$school)
+pcm_full$Division <- as.character(pcm_full$Division)
+pcm_full$Conference <- as.character(pcm_full$Conference)
+
+# Filling in NA if player doesn't have a school listed
+for (i in 1:nrow(pcm_full)){
+  if (is.na(pcm_full$school[i])){
+    pcm_full$school[i] <- "NA"
+  }
+  if (is.na(pcm_full$school_abbr[i])){
+    pcm_full$school_abbr[i] <- "NA"
+  }
+}
+
+# pcm_full %>% vis_miss()
+
+# Deleting the one player that doesn't have a height or weight
+pcm_full <- na.omit(pcm_full)
+
+# pcm_full %>% vis_miss()
+
+# Rounding all of the integer variables
+pcm_full$X40yd <- round(pcm_full$X40yd, 2)
+pcm_full$Vertical <- round(pcm_full$Vertical, 1)
+pcm_full$Bench <- round(pcm_full$Bench)
+pcm_full$Broad.Jump <- round(pcm_full$Broad.Jump)
+pcm_full$X3Cone <- round(pcm_full$X3Cone, 2)
+pcm_full$Shuttle <- round(pcm_full$Shuttle, 2)
+
+# pcm_full
+```
+
+```{r}
+pcmf_head <- pcm_full %>% head()
+
+pcmf_head %>%
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:ncol(pcmf_head), extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c") %>%
+  scroll_box(width = "100%")
+
+pcm_full %>% vis_miss()
+```
+
+![](/Users/brend/OneDrive/Documents/131 Project/Dancing.gif){style="width:100%;"}
+
+We have no more missingness!
+
+We can now learn more about our data through visualization... Graphs!
+
+## Graphs
+
+### Which position is drafted the most?
+
+Defensive Back is the highest because DB is really two positions in one: Corner Back and Safety. They make up the majority of the defense so it makes sense that they are drafted the most. Something I didn't expect was for Wide Receiver to be higher than Running Back, I would have predicted RBs to be higher because on average they have the shortest careers, approximately 2.57 years. But I guess WR are used more on the field on average, usually 3 WR and 1 RB on any given play, so it makes sense they are drafted more often.
+
+```{r}
+pcm_drafted <- subset(pcm_full, Drafted == "Yes")
+
+ggplot(pcm_drafted, aes(x = fct_infreq(Pos))) +
+  geom_bar(fill = 'navy') +
+  labs(title = "Prospects Drafted by Position", x = "Position", y = "Players Drafted") +
+  theme_minimal()
+```
+
+
+### Which position is most commonly drafted in the first round? First overall pick?
+
+What I notice in this chart is that Offensive linemen, Defensive linemen, and Quarter Backs are picked more often in the first round. O-linemen are picked the 5th most in the draft but are picked the 3rd most in the first round, while QBs are picked the 9th most in the draft but are picked the 6th most in the first round. Also, D-linemen are picked the most in the first round and second most as the first overall pick.  This tells me that DL, OL, and QB are the most valuable positions in football, since they are picked before anyone else.
+
+```{r}
+pcm_full_r1 <- subset(pcm_full, round == "1")
+
+pcm_full_r11 <- subset(pcm_full, round == "1" & overall == "1")
+
+pos_r1 <- ggplot(pcm_full_r1, aes(x = fct_infreq(Pos))) +
+  geom_bar(fill = 'navy') + 
+  labs(title = "Prospects Drafted in the First Round", x = "Position", y = "Prospects") +
+  theme_minimal()
+
+pos_r11 <- ggplot(pcm_full_r11, aes(x = fct_infreq(Pos))) +
+  geom_bar(fill = 'navy') + 
+  labs(title = "Prospects Drafted First Overall", x = "Position", y = "Prospects") +
+  theme_minimal()
+
+grid.arrange(pos_r1, pos_r11, ncol = 2)
+```
+
+### Does position have an affect on draft round?
+
+QBs are most often picked in the first round and take a sharp drop in the second round. RBs are picked the most in the 4th round, and take a steep drop in round five, likely because in round five is when most kickers are selected
+
+```{r}
+pcm_QB <- subset(pcm_full, Pos == "QB" & Drafted == "Yes")
+QB_pct <- as.data.frame(prop.table(table(pcm_QB$round)) * 100)
+
+pcm_RB <- subset(pcm_full, Pos == "RB" & Drafted == "Yes")
+RB_pct <- as.data.frame(prop.table(table(pcm_RB$round)) * 100)
+
+pcm_K <- subset(pcm_full, Pos == "K" & Drafted == "Yes")
+K_pct <- as.data.frame(prop.table(table(pcm_K$round)) * 100)
+
+QB_chart <- ggplot(QB_pct, aes(x = Var1, y = Freq)) +
+  geom_bar(stat = "identity", fill = 'navy') +
+  ylim(c(0,40)) +
+  labs(title = "Quarter Backs", x = "Rounds", y = "Percentage") +
+  theme_minimal()
+
+RB_chart <- ggplot(RB_pct, aes(x = Var1, y = Freq)) +
+  geom_bar(stat = "identity", fill = 'navy') +
+  ylim(c(0,40)) +
+  labs(title = "Running Backs", x = "Rounds", y = "Percentage") +
+  theme_minimal()
+
+K_chart <- ggplot(K_pct, aes(x = Var1, y = Freq)) +
+  geom_bar(stat = "identity", fill = 'navy') +
+  ylim(c(0,40)) +
+  labs(title = "Kickers", x = "Rounds", y = "Percentage") +
+  theme_minimal()
+
+grid.arrange(K_chart, RB_chart, QB_chart, ncol = 3, top = "Percentage Picked by Round")
+```
+
+### Which conferences have been picked the most?
+
+SEC is by far the most popular conference NFL teams draft from, some schools from this conference include: Alabama, Georgia, LSU, Tennessee, Texas A&M and other elite level programs
+
+```{r}
+  ggplot(pcm_drafted, aes(x = fct_infreq(Conference))) + 
+    geom_bar(fill = 'navy') +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = "Prospects Drafted by Conference", x = "Conference", y = "Players Drafted")
+```
+
+### Which conferences have picked the most in the first round?
+
+None of the top five schools move positions, but this graph shows the tremendous gap between the five power conferences and everyone else
+
+```{r} 
+  ggplot(pcm_full_r1, aes(x = fct_infreq(Conference))) + 
+    geom_bar(fill = 'navy') + 
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = "Prospects Drafted by Conference in the First Round", x = "Conference", y = "Players Drafted")
+```
+
+### Which of my continous predictors are correlated to eachother?
+
+Overall pick seems to be the only numerical variable that is strongly correlated with ESPN grade. Other strongly correlated variables include 3_Cone:Shuttle (both involve short burst sprints), Vertical:Broad Jump(jumping vertically and horizontally, makes sense their correlated), Weight:40yd (The heavier you are the slower you are and vice versa), Vert:40yd negative (low 40 time equates to high vertical jump) and Weight:Bench (The heavier you are the stronger you are and vice versa).
+
+```{r}
+pcm_numeric <- data.frame(grade=pcm_drafted$grade, draft_year=pcm_drafted$draft_year, overall=pcm_drafted$overall, height=pcm_drafted$height, 
+                          weight=pcm_drafted$weight, x40yd=pcm_drafted$X40yd, Vert=pcm_drafted$Vertical, Bench=pcm_drafted$Bench, 
+                          Broad_Jump=pcm_drafted$Broad.Jump, x3Cone=pcm_drafted$X3Cone, Shuttle=pcm_drafted$Shuttle)
+pcm_cor <- cor(pcm_numeric)
+corrplot(pcm_cor, method = 'color', type='lower')
+```
+
+### Have DL and OL prospects gotten faster as the years have gone on?
+
+They don't seem to be getting faster every year, but it's obvious that DL are faster than OL. There also appears to be a standard for DL to have a 5 second 40yd time, since every year they're hovering around that speed.
+
+```{r}
+pcm_WR_RB <- subset(pcm_full, pcm_full$Pos == "OL" | pcm_full$Pos == "DL", 
+                    select = c(draft_year, Pos, X40yd))
+pcm_WR_RB <- aggregate(X40yd ~ Pos + draft_year, data = pcm_WR_RB, FUN = mean)
+
+ggplot(pcm_WR_RB, aes(fill=Pos, x=draft_year, y=X40yd)) +
+  geom_bar(position = "Dodge", stat = "identity") +
+  ylim(c(0,6)) + 
+  labs(x = 'Draft Year', y = '40 Yard Time') + 
+  theme_minimal()
+```
+
+### Are players getting faster/stronger?
+
+NFL prospects have gotten significantly faster since 2015, but oddly since 2015 bench press has also gotten significantly lower. This may be due to stricter rules for bench and loser rules for 40yd time in 2016. Or maybe more lighter weight positions like DB and WR were invited to the combine over heavier players like O and D-lineman, bringing down the average for bench and increasing the speed in 40 times.
+
+```{r}
+pcm_40_avg <- aggregate(X40yd ~ draft_year, pcm_full, mean)
+# Getting rid of QBs Punters and Kickers from bench since they are all zero
+pcm_Bench_avg <- subset(pcm_full, !(Pos %in% c("QB", "K", "P")))
+pcm_Bench_avg <- aggregate(Bench ~ draft_year, pcm_Bench_avg, mean)
+
+
+x40_avg_line <- ggplot(pcm_40_avg, aes(x = draft_year, y = X40yd)) +
+  geom_line() +
+  labs(y = "40yd Time", x = "Year", title = "40yd Time") +
+  theme_minimal()
+
+Bench_avg_line <- ggplot(pcm_Bench_avg, aes(x = draft_year, y = Bench)) +
+  geom_line() +
+  labs(x = "Year", y = "Bench Reps", title = "Bench Press") +
+  theme_minimal()
+
+grid.arrange(x40_avg_line, Bench_avg_line, ncol = 2, top = "Average Results per Year")
+```
+
+# Model Set Up
+
+Finally, we can start creating out models
+
+![](/Users/brend/OneDrive/Documents/131 Project/clapping.gif){style="width:100%;"}
+
+## Making Groupings for Round
+
+Making a model that tries to predict 8 classes wouldn't be effective. It's too many for any model to predict, so I'm going to instead split the rounds into 4 classes.
+
+```{r}
+pcm_full$round <- gsub("\\b(1|2)\\b", "1st or 2nd", pcm_full$round, ignore.case = TRUE)
+pcm_full$round <- gsub("\\b(3|4)\\b", "3rd or 4th", pcm_full$round, ignore.case = TRUE)
+pcm_full$round <- gsub("\\b(5|6)\\b", "5th or 6th", pcm_full$round, ignore.case = TRUE)
+pcm_full$round <- gsub("\\b(7|Undrafted)\\b", "7th or UD", pcm_full$round, ignore.case = TRUE)
+```
+
+  - `1st or 2nd`: First or Second Round Draft Pick (High)
+  - `3rd or 4th`: Third or Fourth Round Draft Pick (Middle High)
+  - `5th or 6th`: Fifth or Sixth Round Draft Pick (Middle Low)
+  - `7th or UD`: Seventh or Undrafted (Low)
+
+## Final Cleaning
+
+```{r}
+# Cleaning the variable names
+pcm_full_c <- clean_names(pcm_full)
+
+# Changing necessary character variables to factors
+pcm_full_c$round <- as.factor(pcm_full_c$round)
+pcm_full_c$drafted <- as.factor(pcm_full_c$drafted)
+pcm_full_c$pos <- as.factor(pcm_full_c$pos)
+pcm_full_c$conference <- as.factor(pcm_full_c$conference)
+
+# Changing all dbl to int
+pcm_full_c <- pcm_full_c %>% mutate_if(is.double, as.integer)
+```
+
+## Splitting Data
+
+```{r}
+set.seed(1936)
+
+# Splitting the data by 80% and stratifying by round
+nfl_split <- initial_split(pcm_full_c, prop = 0.80, strata = round)
+
+nfl_train <- training(nfl_split)
+nfl_test <- testing(nfl_split)
+
+dim(nfl_train)  
+dim(nfl_test)
+```
+**3,703** observations for the training data and **927** observations for the testing data
+
+## K-fold Cross Validation
+
+Is the data imbalanced enough where stratified sampling for cross-validation is necessary? 
+
+```{r}
+ggplot(pcm_full_c, aes(x = fct_infreq(pcm_full$round))) +
+  geom_bar(fill = 'navy') +
+  labs(x = 'Classes', y = "Players Drafted") +
+  theme_minimal()
+```
+
+Looking at the graph, there is a significant enough imbalance between `7th or UD` and the other classes that stratified sampling is warranted
+
+```{r}
+nfl_fold <- vfold_cv(nfl_train, v = 5, strata = round)
+```
+
+## Recipe Building
+
+For my predictors I'm going to use: 
+
+`grade`, `pos`, `height`, `weight`, `x40yd`, `vertical`, `bench`, `broad_jump`, `x3Cone`, `shuttle`, and `conference`
+
+```{r}
+nfl_recipe <- recipe(round ~ grade + pos + height + weight + x40yd + vertical + bench + 
+                       broad_jump + x3cone + shuttle + conference, data = nfl_train) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_center(all_predictors()) %>%
+  step_scale(all_predictors())
+
+prep(nfl_recipe) %>%
+  bake(new_data = nfl_train) %>%
+  head() %>%
+  kable() %>% 
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:32, extra_css = "white-space: nowrap;") %>%
+  row_spec(0, align = "c") %>%
+  scroll_box(width = "100%")
+```
+
+```{r, include=FALSE}
+# Saving processes
+save(nfl_train, nfl_test, nfl_fold, nfl_recipe, 
+     file = "/Users/brend/OneDrive/Documents/131 Project/model setup.rda")
+```
+
+
+# Model Building
+
+I have chosen five models that I believe will fit my data the best. Elastic Net Regression, Gradient Boosted Trees, K-Nearest Neighbors, Latent Dirichlet Allocation (LDA), and Random Forest. I will train each model using the training data, I will also tune parameters for each model if necessary. I will then measure their performance off of their respective `auc_roc` value. Finally, I will fit the testing data to the best performing model.
+
+```{r, include=FALSE}
+# Model setup
+net_set_nfl <- multinom_reg(mixture = tune(),
+                        penalty = tune()) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+knn_set_nfl <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+rf_set_nfl <- rand_forest(mtry = tune(),
+                             trees = tune(),
+                             min_n = tune()) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+bt_set_nfl <- boost_tree(mtry = tune(), 
+                           trees = tune(), 
+                           learn_rate = tune()) %>%
+  set_engine("xgboost") %>% 
+  set_mode("classification")
+
+lda_set_nfl <- discrim_linear() %>% 
+  set_engine("MASS") %>%
+  set_mode("classification")
+```
+
+```{r, include = FALSE}
+# Workflows
+net_wflow_nfl <- workflow() %>%
+  add_model(net_set_nfl) %>%
+  add_recipe(nfl_recipe)
+
+knn_wflow_nfl <- workflow() %>%
+  add_model(knn_set_nfl) %>%
+  add_recipe(nfl_recipe)
+
+rf_wflow_nfl <- workflow() %>%
+  add_model(rf_set_nfl) %>%
+  add_recipe(nfl_recipe)
+
+bt_wflow_nfl <- workflow() %>%
+  add_model(bt_set_nfl) %>%
+  add_recipe(nfl_recipe)
+
+lda_wflow_nfl <- workflow() %>%
+  add_model(lda_set_nfl) %>%
+  add_recipe(nfl_recipe)
+```
+
+```{r, include=FALSE}
+# Grids
+net_grid_nfl <- grid_regular(penalty(),
+                         mixture(range = c(0,1)),
+                         levels = 10)
+
+knn_grid_nfl <- grid_regular(neighbors(range = c(1,20)),
+                         levels = 10)
+
+rf_grid_nfl <- grid_regular(mtry(range = c(1,10)),
+                             trees(range = c(300, 800)),
+                             min_n(range = c(1, 50)),
+                             levels = 5)
+
+bt_grid_nfl <- grid_regular(mtry(range = c(1,8)), 
+                        trees(range = c(100, 500)),
+                        learn_rate(range = c(0.001, 0.3)),
+                        levels = 5)
+```
+
+```{r, include = FALSE, eval=FALSE}
+# Tuning
+set.seed(1936)
+load("/Users/brend/OneDrive/Documents/131 Project/model setup.rda")
+
+net_tune_nfl <- tune_grid(
+  net_wflow_nfl,
+  resamples = nfl_fold,
+  grid = net_grid_nfl
+)
+
+knn_tune_nfl <- tune_grid(
+  knn_wflow_nfl,
+  resamples = nfl_fold,
+  grid = knn_grid_nfl
+)
+
+rf_tune_nfl <- tune_grid(
+  rf_wflow_nfl,
+  resamples = nfl_fold,
+  grid = rf_grid_nfl
+)
+
+bt_tune_nfl <- tune_grid(
+  bt_wflow_nfl,
+  resamples = nfl_fold,
+  grid = bt_grid_nfl
+)
+```
+
+```{r, eval = FALSE}
+save(net_tune_nfl, file = "/Users/brend/OneDrive/Documents/131 Project/net tune.rda")
+save(knn_tune_nfl, file = "/Users/brend/OneDrive/Documents/131 Project/knn tune.rda")
+save(rf_tune_nfl, file = "/Users/brend/OneDrive/Documents/131 Project/rf tune 2.rda")
+save(bt_tune_nfl, file = "/Users/brend/OneDrive/Documents/131 Project/bt tune.rda")
+```
+
+
+```{r}
+# Loading in saved tunning
+load("/Users/brend/OneDrive/Documents/131 Project/net tune.rda")
+load("/Users/brend/OneDrive/Documents/131 Project/knn tune.rda")
+load("/Users/brend/OneDrive/Documents/131 Project/rf tune 2.rda")
+load("/Users/brend/OneDrive/Documents/131 Project/bt tune.rda")
+```
+
+## Elastic Net Regression
+
+For the elastic net model the parameters penalty and mixture were tuned. Penalty controls the complexity of the model and mixture controls the balance between the ridge regression and lasso regression. Looking at the graph for `roc_auc`, the model would perform best with a small mixture value and a large penalty value.
+
+```{r}
+autoplot(net_tune_nfl, metric = 'roc_auc')
+```
+
+## K-Nearest Neighbors
+
+The only parameter that needs to be tuned for `knn` are the number of neighbors that can be in range. The graph shows us that as the number of neighbors increases, the model performs better. But, it doesn't perform as well as the other models we tried.
+
+```{r}
+autoplot(knn_tune_nfl, metric = 'roc_auc')
+```
+
+## Random Forest
+
+In a random forest there are three parameters that need to be tuned.
+
+  - `mrty`: number of predictors that will be randomly sampled at each split of the tree model
+  
+  - `trees`: number of trees in the model
+
+  - `min_n`: minimum number of data points in a node that are required for the mode to be further split
+  
+The graphs tell me the data fits a high `mrty`, a medium number of `trees`, and a high `min_n` value.
+
+```{r}
+autoplot(rf_tune_nfl, metric = 'roc_auc')
+```
+
+## Gradient Boosted Trees
+
+This model uses the `mtry` and `trees` like random forest, but it instead uses `learn_rate` that controls how much weight each tree has on the overall model.
+
+Looking at the performance, a low learn rate, low predictors, and low trees seemed to work best for fitting the data.
+
+```{r}
+autoplot(bt_tune_nfl, metric = 'roc_auc')
+```
+
+```{r, include=FALSE}
+best_net_nfl <- show_best(net_tune_nfl, metric = "roc_auc", n = 1)
+best_knn_nfl <- show_best(knn_tune_nfl, metric = "roc_auc", n = 1)
+best_rf_nfl <- show_best(rf_tune_nfl, metric = "roc_auc", n = 1)
+best_bt_nfl <- show_best(bt_tune_nfl, metric = "roc_auc", n = 1)
+
+#LDA
+lda_fit_nfl <- fit(lda_wflow_nfl, data = nfl_train)
+lda_auc_nfl <- augment(lda_fit_nfl, new_data = nfl_train) %>%
+  roc_auc(truth = round, '.pred_1st or 2nd':'.pred_7th or UD')
+lda_auc_nfl$mean <- lda_auc_nfl$.estimate
+
+model_vector <- c('Elastic Net', 'K-Nearest Neighbors', 'Random Forest', 'Boosted Tree', 'LDA')
+roc_results <- bind_rows(best_net_nfl, best_knn_nfl, best_rf_nfl, best_bt_nfl, lda_auc_nfl)
+roc_results$Models <- model_vector
+roc_results <- roc_results[, c('Models', '.metric', 'mean')]
+roc_results <- roc_results[order(-roc_results$mean), ]
+```
+
+## Model ROC_AUC Rates
+
+Even though the LDA model performed the best, I'm more confident in the elastic net model, so that is what I will be using to fit my data.
+
+```{r}
+roc_results %>%
+  kable() %>% 
+  kable_styling("striped", full_width = T)
+```
+
+# Results
+
+## Chosen Parameters
+
+The best parameters for the Elastic Net model are:
+```{r}
+best_net_nfl %>% dplyr::select(.config, penalty, mixture) %>%
+  kable() %>% 
+  kable_styling(full_width = T)
+```
+
+
+```{r, include = FALSE}
+set.seed(1936)
+
+final_net_nfl <- finalize_workflow(net_wflow_nfl, best_net_nfl)
+final_net_nfl <- fit(final_net_nfl, nfl_train)
+
+final_net_nfl_test <- augment(final_net_nfl, nfl_test) %>%
+  dplyr::select(round, starts_with(".pred"))
+```
+
+## Fitting to Test Data
+
+After fitting the parameters and applying the final fitted model to the testing data we get an roc_auc curve of approximatly 0.83. 
+
+```{r}
+roc_auc(final_net_nfl_test, truth = round, '.pred_1st or 2nd':'.pred_7th or UD') %>%
+  kable() %>% 
+  kable_styling(full_width = T)
+```
+
+![](/Users/brend/OneDrive/Documents/131 Project/meh.webp){style="width:100%;"}
+
+This is an okay estimate, it's what we expected based on our tuning.  
+
+## Most Important Predictors
+
+Grade was by far the most important predictor for determining where a player is drafted. This makes intuitive sense since if a player is more highly graded (better), then they'll likely get drafted sooner. Broad jump and weight look like the most important physical attributes for determining draft position. Also having the kicker, D-lineman, or a tight end position was an indicator for draft spot. I'm surprised and slightly disappointed that the conference a player played it had little to no effect on the outcome (it took a long time to clean that data).
+
+```{r}
+final_net_nfl %>% extract_fit_parsnip() %>%
+  vip() 
+```
+
+## ROC Curve per Class
+
+It appears it's much easier to predict first and second round selections compared to other rounds. This makes sense because there is a massive skill/talent gap between the first two rounds and everyone else in the draft. 
+
+```{r}
+roc_curve(final_net_nfl_test, truth = round, '.pred_1st or 2nd':'.pred_7th or UD') %>%
+  autoplot()
+```
+
+## Decision Matrix
+
+The gap between the first & second round and everyone else is apparent. The model rarely predicted a highly rated prospect incorrectly. However, the model was especially bad at predicting 5th and 6th round players effectively. It mostly categorized 5th and 6th round players as 7th or undrafted. This could be due to the categories having too much in common with each other, making them harder to discern. Also having four classes makes it harder for the model to predict outcomes, having a model that only predicts two outcomes, like drafted or not drafted, would be better.
+
+```{r}
+conf_mat(final_net_nfl_test, truth = round, .pred_class) %>%
+  autoplot(type = "heatmap")
+```
+
+# Conclusion
+
+I've learned that it is very challenging to predict where players will be drafted. There are a lot more factors that go into drafting players. Other factors include: what position the drafting team is looking to fill, if the player has off-field issues, how old the player is, if the player is injury prone, and several other variables. It simply wasn't enough to just use a player's combine stats, and what conference they played in. My model also heavily relied on the ESPN's grading system which is disappointing, once the grades started becoming lower and inconsistent, it was harder for the model to predict players. Also, it was challenging for the model to predict a multiclass problem, the more classes you try to predict, the harder it is for the model to make the correct predictions. This model can definitely be improved with better predictors, more data, and fewer classes.
+
+![](/Users/brend/OneDrive/Documents/131 Project/Hug.gif){style="width:100%;"}
+
